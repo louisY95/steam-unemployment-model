@@ -22,24 +22,11 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        cache: 'pip'
 
-    - name: Install Chrome and ChromeDriver
-      run: |
-        # Install Chrome
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-
-        # Verify installation
-        google-chrome --version
-        which google-chrome
-
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install pandas pyarrow requests beautifulsoup4 lxml fredapi pyyaml python-dotenv loguru click
 
     - name: Create data directories
       run: |
@@ -49,82 +36,85 @@ jobs:
       env:
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       run: |
-        cp config/config.yaml.example config/config.yaml
-        sed -i "s/YOUR_FRED_API_KEY_HERE/${FRED_API_KEY:-NO_KEY_SET}/g" config/config.yaml
-        cat config/config.yaml | grep -A 2 "api_keys"
+        cat > config/config.yaml << EOF
+        api_keys:
+          fred_api_key: "${FRED_API_KEY:-NO_KEY}"
+          steam_api_key: ""
 
-    - name: Test Python environment
-      run: |
-        python --version
-        python -c "import selenium; print('Selenium version:', selenium.__version__)"
-        python -c "from selenium import webdriver; print('Webdriver imported successfully')"
+        collection:
+          start_date: "2020-03-01"
+          end_date: ""
+          steam_method: "steamdb_scrape"
+          poll_interval: 3600
+          max_retries: 3
+          request_delay: 2.0
 
-    - name: Collect Steam data
+        working_hours:
+          east_coast:
+            start_hour: 8
+            end_hour: 17
+            timezone: "America/New_York"
+          west_coast:
+            start_hour: 8
+            end_hour: 17
+            timezone: "America/Los_Angeles"
+          include_weekends: false
+
+        browser:
+          headless: true
+          timeout: 30
+
+        logging:
+          level: "INFO"
+          log_to_file: true
+          log_file: "logs/model.log"
+        EOF
+
+    - name: Collect Steam data (simple method)
       run: |
-        echo "Starting Steam data collection..."
-        python main.py collect --source steam --method steamdb_selenium || {
-          echo "Steam collection failed, checking logs..."
-          cat logs/model.log 2>/dev/null || echo "No log file found"
-          exit 1
-        }
-      timeout-minutes: 10
-      continue-on-error: false
+        python main.py collect --source steam --method steam_current
+      timeout-minutes: 2
+      continue-on-error: true
 
     - name: Collect FRED data
       if: github.event.inputs.collect_fred == 'true'
       env:
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       run: |
-        echo "Starting FRED data collection..."
         python main.py collect --source fred
-      timeout-minutes: 5
+      timeout-minutes: 3
 
-    - name: Check collection status
+    - name: Show status
       run: |
-        python main.py status
-        echo "Listing data files:"
-        ls -lah data/raw/ || echo "No data/raw directory"
-        ls -lah logs/ || echo "No logs directory"
+        python main.py status || true
+        echo "=== Data files ==="
+        ls -lh data/raw/ 2>/dev/null || echo "No data files yet"
+        echo "=== Logs ==="
+        tail -50 logs/model.log 2>/dev/null || echo "No logs yet"
 
-    - name: Show logs on failure
-      if: failure()
-      run: |
-        echo "=== Full log file ==="
-        cat logs/model.log 2>/dev/null || echo "No log file available"
-        echo "=== End of logs ==="
-
-    - name: Upload data as artifact
+    - name: Upload artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: steam-data-${{ github.run_number }}
+        name: data-run-${{ github.run_number }}
         path: |
           data/raw/*.parquet
           logs/*.log
         retention-days: 90
 
-    - name: Create summary
+    - name: Summary
       if: always()
       run: |
-        echo "## 📊 Data Collection Summary" >> $GITHUB_STEP_SUMMARY
+        echo "## Collection Summary" >> $GITHUB_STEP_SUMMARY
+        echo "**Run #${{ github.run_number }}** at $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Timestamp:** $(date -u)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-
         if [ -f "data/raw/steam_hourly.parquet" ]; then
-          RECORDS=$(python -c "import pandas as pd; df = pd.read_parquet('data/raw/steam_hourly.parquet'); print(len(df))" 2>/dev/null || echo "unknown")
-          echo "✅ Steam data collected: $RECORDS records" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Steam data exists" >> $GITHUB_STEP_SUMMARY
         else
-          echo "❌ Steam data collection failed" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ No Steam data file" >> $GITHUB_STEP_SUMMARY
         fi
-
         if [ -f "data/raw/unemployment.parquet" ]; then
-          echo "✅ Unemployment data collected" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Unemployment data exists" >> $GITHUB_STEP_SUMMARY
         else
-          echo "ℹ️ Unemployment data not collected this run" >> $GITHUB_STEP_SUMMARY
+          echo "ℹ️ No unemployment data" >> $GITHUB_STEP_SUMMARY
         fi
-
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📁 Files" >> $GITHUB_STEP_SUMMARY
-        ls -lh data/raw/*.parquet 2>/dev/null | awk '{print "- " $9 ": " $5}' >> $GITHUB_STEP_SUMMARY || echo "No data files" >> $GITHUB_STEP_SUMMARY

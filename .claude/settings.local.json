@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py:*)",
+      "Bash(pip install:*)",
+      "Bash(copy configconfig.yaml.example configconfig.yaml)",
+      "Bash(echo $FRED_API_KEY)",
+      "Bash(python:*)",
+      "Bash(git init:*)",
+      "Bash(git config:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

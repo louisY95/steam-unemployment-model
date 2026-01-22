@@ -1,0 +1,110 @@
+name: Collect Steam & Unemployment Data
+
+on:
+  schedule:
+    # Run every hour
+    - cron: '0 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      collect_fred:
+        description: 'Also collect FRED data'
+        required: false
+        default: 'false'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for proper git operations
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          chromium-browser \
+          chromium-chromedriver \
+          libglib2.0-0 \
+          libnss3 \
+          libgconf-2-4 \
+          libfontconfig1
+
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Download existing data artifacts
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: steam-data
+        path: data/
+
+    - name: Create config file
+      env:
+        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      run: |
+        cp config/config.yaml.example config/config.yaml
+        sed -i "s/YOUR_FRED_API_KEY_HERE/$FRED_API_KEY/g" config/config.yaml
+
+    - name: Collect Steam data
+      run: |
+        python main.py collect --source steam --method steamdb_selenium
+      timeout-minutes: 10
+
+    - name: Collect FRED data (weekly on Sundays)
+      if: github.event.schedule == '0 0 * * 0' || github.event.inputs.collect_fred == 'true'
+      env:
+        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      run: |
+        python main.py collect --source fred
+      timeout-minutes: 5
+
+    - name: Check data status
+      run: |
+        python main.py status
+
+    - name: Upload data as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: steam-data
+        path: |
+          data/raw/*.parquet
+          logs/*.log
+        retention-days: 90
+
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git pull origin main --rebase || true
+        git add data/raw/*.parquet data/processed/*.parquet logs/*.log || true
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-collect data $(date -u +%Y-%m-%d_%H:%M:%S_UTC)" && git push) || echo "No changes to commit"
+      continue-on-error: true
+
+    - name: Create summary
+      run: |
+        echo "## Data Collection Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Timestamp:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f "data/raw/steam_hourly.parquet" ]; then
+          echo "✅ Steam data collected" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Steam data collection failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ -f "data/raw/unemployment.parquet" ]; then
+          echo "✅ Unemployment data available" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ Unemployment data not collected this run" >> $GITHUB_STEP_SUMMARY
+        fi

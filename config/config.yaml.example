@@ -1,0 +1,123 @@
+# Steam & Unemployment Model Configuration
+# Copy this file to config.yaml and fill in your API keys
+
+# API Keys
+api_keys:
+  # FRED API Key - Required
+  # Get yours at: https://fred.stlouisfed.org/docs/api/api_key.html
+  fred_api_key: "YOUR_FRED_API_KEY_HERE"
+  
+  # Steam Web API Key - Optional (for additional data sources)
+  # Get yours at: https://steamcommunity.com/dev/apikey
+  steam_api_key: "YOUR_STEAM_API_KEY_HERE"
+
+# Data Collection Settings
+collection:
+  # Start date for data collection (YYYY-MM-DD)
+  # Post-COVID focus starts from 2020-03-01
+  start_date: "2020-03-01"
+  
+  # End date (leave empty for current date)
+  end_date: ""
+  
+  # Steam data collection method
+  # Options: "steamdb_scrape", "steam_api_poll", "both"
+  steam_method: "steamdb_scrape"
+  
+  # Polling interval in seconds (for real-time collection)
+  poll_interval: 3600  # 1 hour
+  
+  # Maximum retries for failed requests
+  max_retries: 3
+  
+  # Delay between requests (seconds) to avoid rate limiting
+  request_delay: 2.0
+
+# US Working Hours Definition
+working_hours:
+  # Eastern Time Zone working hours
+  east_coast:
+    start_hour: 8   # 8:00 AM EST/EDT
+    end_hour: 17    # 5:00 PM EST/EDT
+    timezone: "America/New_York"
+  
+  # Pacific Time Zone working hours
+  west_coast:
+    start_hour: 8   # 8:00 AM PST/PDT
+    end_hour: 17    # 5:00 PM PST/PDT
+    timezone: "America/Los_Angeles"
+  
+  # Whether to include weekends
+  include_weekends: false
+
+# FRED Series Configuration
+fred_series:
+  # Primary unemployment rate (monthly, seasonally adjusted)
+  unemployment_rate:
+    series_id: "UNRATE"
+    frequency: "monthly"
+    
+  # Weekly initial jobless claims (more granular)
+  initial_claims:
+    series_id: "ICSA"
+    frequency: "weekly"
+    
+  # Continued jobless claims
+  continued_claims:
+    series_id: "CCSA"
+    frequency: "weekly"
+    
+  # Employment population ratio
+  employment_ratio:
+    series_id: "EMRATIO"
+    frequency: "monthly"
+
+# Analysis Settings
+analysis:
+  # Granger causality test settings
+  granger:
+    max_lag: 12  # Maximum lag periods to test
+    significance_level: 0.05
+  
+  # Cross-correlation settings
+  cross_correlation:
+    max_lag: 24  # Maximum lag for cross-correlation
+  
+  # Regression settings
+  regression:
+    test_size: 0.2  # Proportion of data for testing
+    cv_folds: 5     # Cross-validation folds
+    
+  # VAR model settings
+  var:
+    max_lag: 12
+    information_criterion: "aic"  # aic, bic, hqic
+
+# Output Settings
+output:
+  # Data output format
+  data_format: "parquet"  # parquet, csv, both
+  
+  # Results format
+  results_format: "json"  # json, yaml
+  
+  # Generate HTML report
+  generate_report: true
+  
+  # Visualization settings
+  plots:
+    style: "seaborn-v0_8-whitegrid"
+    figure_size: [12, 6]
+    dpi: 150
+
+# Logging Settings
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_to_file: true
+  log_file: "logs/model.log"
+
+# Selenium/Browser Settings (for SteamDB scraping)
+browser:
+  headless: true
+  timeout: 30
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"

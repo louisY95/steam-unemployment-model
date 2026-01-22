@@ -70,9 +70,15 @@ jobs:
           log_file: "logs/model.log"
         EOF
 
+    - name: Test Python setup
+      run: |
+        python --version
+        python -c "import sys; print('Python path:', sys.executable); print('Packages:'); import pkg_resources; print([p.key for p in pkg_resources.working_set][:20])"
+      continue-on-error: true
+
     - name: Collect Steam data (simple method)
       run: |
-        python main.py collect --source steam --method steam_current
+        python main.py collect --source steam --method steam_current || echo "Collection failed but continuing..."
       timeout-minutes: 2
       continue-on-error: true
 

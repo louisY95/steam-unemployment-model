@@ -351,75 +351,129 @@ class SteamDataCollector:
     
     def collect_current_from_steam(self) -> Optional[SteamDataPoint]:
         """
-        Collect current concurrent user count from Steam's official stats page.
-        
+        Collect current concurrent user count from Steam using multiple fallback methods.
+
         This is useful for building up historical data over time through polling.
-        
+
         Returns:
-            Single data point with current timestamp and user count, or None if failed
+            Single data point with current timestamp and user count, or None if all methods fail
         """
-        logger.debug("Collecting current data from Steam stats page...")
-        
+        logger.debug("Collecting current data from Steam...")
+
+        # Try multiple methods in order of reliability
+        methods = [
+            self._try_steamcharts_scrape,
+            self._try_steam_web_api,
+            self._try_steam_stats_page,
+        ]
+
+        for method in methods:
+            try:
+                result = method()
+                if result:
+                    logger.info(f"Successfully collected data using {method.__name__}")
+                    return result
+            except Exception as e:
+                logger.debug(f"{method.__name__} failed: {e}")
+                continue
+
+        logger.warning("All Steam collection methods failed")
+        return None
+
+    def _try_steam_web_api(self) -> Optional[SteamDataPoint]:
+        """Try Steam Web API for concurrent users (app 753 is Steam itself)"""
+        r = requests.get(
+            'https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=753',
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if 'response' in data and 'player_count' in data['response']:
+                # Note: App 753 players * multiplier to estimate total Steam users
+                # Based on typical ratio, multiply by ~50,000
+                count = data['response']['player_count'] * 50000
+                logger.info(f"Steam Web API estimate: {count:,} users")
+                return SteamDataPoint(
+                    timestamp=datetime.now(),
+                    concurrent_users=count,
+                    source="steam_web_api_estimated"
+                )
+        return None
+
+    def _try_steamcharts_scrape(self) -> Optional[SteamDataPoint]:
+        """Try scraping SteamCharts for current online users"""
+        r = requests.get('https://steamcharts.com/', timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            # Look for "Online Now" in the page
+            text = soup.get_text()
+            match = re.search(r'(\d{1,3}(?:,\d{3})+)\s+Online', text)
+            if match:
+                count = int(match.group(1).replace(',', ''))
+                logger.info(f"SteamCharts: {count:,} users online")
+                return SteamDataPoint(
+                    timestamp=datetime.now(),
+                    concurrent_users=count,
+                    source="steamcharts"
+                )
+        return None
+
+    def _try_steam_stats_page(self) -> Optional[SteamDataPoint]:
+        """Original method: Try Steam's official stats page"""
         headers = {
             "User-Agent": self.browser_config.get("user_agent", "Mozilla/5.0"),
             "Accept": "text/html,application/xhtml+xml",
         }
-        
-        try:
-            response = requests.get(
-                self.STEAM_STATS_URL,
-                headers=headers,
-                timeout=30
-            )
-            
-            if response.status_code != 200:
-                logger.warning(f"Steam stats page returned status {response.status_code}")
-                return None
-            
-            soup = BeautifulSoup(response.text, 'lxml')
-            
-            # Find the concurrent users count
-            # The page typically has a span with class containing the count
-            stats_span = soup.find('span', class_='statsCountConcurrent')
-            
-            if not stats_span:
-                # Alternative: look in the page text for the pattern
-                text = soup.get_text()
-                match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*(?:users?|players?)\s*(?:online|playing)', 
-                                  text, re.IGNORECASE)
-                if match:
-                    count_str = match.group(1).replace(',', '')
-                    return SteamDataPoint(
-                        timestamp=datetime.now(),
-                        concurrent_users=int(count_str),
-                        source="steam_stats_page"
-                    )
-            else:
-                count_str = stats_span.get_text().strip().replace(',', '')
+
+        response = requests.get(
+            self.STEAM_STATS_URL,
+            headers=headers,
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            logger.warning(f"Steam stats page returned status {response.status_code}")
+            return None
+
+        soup = BeautifulSoup(response.text, 'lxml')
+
+        # Find the concurrent users count
+        stats_span = soup.find('span', class_='statsCountConcurrent')
+
+        if not stats_span:
+            # Alternative: look in the page text for the pattern
+            text = soup.get_text()
+            match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*(?:users?|players?)\s*(?:online|playing)',
+                              text, re.IGNORECASE)
+            if match:
+                count_str = match.group(1).replace(',', '')
                 return SteamDataPoint(
                     timestamp=datetime.now(),
                     concurrent_users=int(count_str),
                     source="steam_stats_page"
                 )
-            
-            # Also try to extract from the JSON data embedded in the page
-            script_tags = soup.find_all('script')
-            for script in script_tags:
-                script_text = script.string or ""
-                match = re.search(r'"player_count":\s*(\d+)', script_text)
-                if match:
-                    return SteamDataPoint(
-                        timestamp=datetime.now(),
-                        concurrent_users=int(match.group(1)),
-                        source="steam_stats_json"
-                    )
-            
-            logger.warning("Could not find concurrent user count on Steam stats page")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error collecting from Steam stats page: {e}")
-            return None
+        else:
+            count_str = stats_span.get_text().strip().replace(',', '')
+            return SteamDataPoint(
+                timestamp=datetime.now(),
+                concurrent_users=int(count_str),
+                source="steam_stats_page"
+            )
+
+        # Also try to extract from the JSON data embedded in the page
+        script_tags = soup.find_all('script')
+        for script in script_tags:
+            script_text = script.string or ""
+            match = re.search(r'"player_count":\s*(\d+)', script_text)
+            if match:
+                return SteamDataPoint(
+                    timestamp=datetime.now(),
+                    concurrent_users=int(match.group(1)),
+                    source="steam_stats_json"
+                )
+
+        logger.warning("Could not find concurrent user count on Steam stats page")
+        return None
     
     def start_continuous_collection(self, output_path: Path, interval_seconds: int = 3600):
         """

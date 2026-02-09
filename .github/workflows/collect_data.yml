@@ -2,7 +2,7 @@ name: Collect Steam & Unemployment Data
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
+    - cron: '*/5 * * * *'  # Every 5 minutes (for testing - change back to '0 * * * *' for hourly)
   workflow_dispatch:
     inputs:
       collect_fred:

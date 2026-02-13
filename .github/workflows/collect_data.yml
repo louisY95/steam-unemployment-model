@@ -78,6 +78,8 @@ jobs:
         python -c "import pandas, requests, bs4; print('✓ All required packages available')"
         echo "Checking config file..."
         cat config/config.yaml | head -10
+        echo "Testing Steam API access..."
+        python -c "import requests; r = requests.get('https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=753', timeout=10); print('Steam API Status:', r.status_code); print('Response:', r.json())"
 
     - name: Collect Steam data (simple method)
       run: |

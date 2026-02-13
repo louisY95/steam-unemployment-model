@@ -82,7 +82,19 @@ jobs:
     - name: Collect Steam data (simple method)
       run: |
         echo "Starting Steam data collection..."
-        python main.py collect --source steam --method steam_current
+        echo "Current directory: $(pwd)"
+        echo "Data directory contents before:"
+        ls -la data/raw/ || echo "Directory doesn't exist yet"
+
+        python main.py collect --source steam --method steam_current 2>&1 | tee collection.log || {
+          echo "Collection failed! Exit code: $?"
+          echo "=== Collection log ==="
+          cat collection.log
+          echo "=== Model log (if exists) ==="
+          cat logs/model.log 2>/dev/null || echo "No model.log"
+          exit 1
+        }
+
         echo "Collection completed. Checking for data file..."
         ls -lh data/raw/
       timeout-minutes: 2

@@ -2,7 +2,7 @@ name: Collect Steam & Unemployment Data
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       collect_fred:
@@ -24,117 +24,28 @@ jobs:
         python-version: '3.10'
 
     - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install pandas pyarrow requests beautifulsoup4 lxml fredapi pyyaml python-dotenv loguru click
+      run: pip install pandas pyarrow requests
 
-    - name: Create data directories
-      run: |
-        mkdir -p data/raw data/processed data/results logs
+    - name: Download existing data
+      uses: actions/download-artifact@v4
+      with:
+        name: steam-data-latest
+        path: data/raw
+      continue-on-error: true
 
-    - name: Create config file
+    - name: Collect Steam data
       env:
+        COLLECT_FRED: ${{ github.event.inputs.collect_fred || 'false' }}
         FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      run: |
-        cat > config/config.yaml << EOF
-        api_keys:
-          fred_api_key: "${FRED_API_KEY:-NO_KEY}"
-          steam_api_key: ""
+      run: python collect_simple.py
 
-        collection:
-          start_date: "2020-03-01"
-          end_date: ""
-          steam_method: "steamdb_scrape"
-          poll_interval: 3600
-          max_retries: 3
-          request_delay: 2.0
-
-        working_hours:
-          east_coast:
-            start_hour: 8
-            end_hour: 17
-            timezone: "America/New_York"
-          west_coast:
-            start_hour: 8
-            end_hour: 17
-            timezone: "America/Los_Angeles"
-          include_weekends: false
-
-        browser:
-          headless: true
-          timeout: 30
-
-        logging:
-          level: "INFO"
-          log_to_file: true
-          log_file: "logs/model.log"
-        EOF
-
-    - name: Test Python setup
-      run: |
-        echo "Python version:"
-        python --version
-        echo "Testing imports..."
-        python -c "import pandas, requests, bs4; print('✓ All required packages available')"
-        echo "Checking config file..."
-        cat config/config.yaml | head -10
-        echo "Testing Steam API access..."
-        python -c "import requests; r = requests.get('https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=753', timeout=10); print('Steam API Status:', r.status_code); print('Response:', r.json())"
-
-    - name: Collect Steam data (simple method)
-      run: |
-        echo "Starting Steam data collection..."
-        echo "Current directory: $(pwd)"
-        echo "Data directory contents before:"
-        ls -la data/raw/ || echo "Directory doesn't exist yet"
-
-        python main.py collect --source steam --method steam_current 2>&1 | tee collection.log || {
-          echo "Collection failed! Exit code: $?"
-          echo "=== Collection log ==="
-          cat collection.log
-          echo "=== Model log (if exists) ==="
-          cat logs/model.log 2>/dev/null || echo "No model.log"
-          exit 1
-        }
-
-        echo "Collection completed. Checking for data file..."
-        ls -lh data/raw/
-      timeout-minutes: 2
-
-    - name: Collect FRED data
-      if: github.event.inputs.collect_fred == 'true'
-      env:
-        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      run: |
-        if [ -z "$FRED_API_KEY" ]; then
-          echo "WARNING: FRED_API_KEY secret not set. Skipping FRED data collection."
-          echo "To add it: Settings -> Secrets and variables -> Actions -> New repository secret"
-          echo "Name: FRED_API_KEY"
-          echo "Value: 7285d44800d2ba421ac2017dcdded78f"
-          exit 0
-        fi
-        echo "Starting FRED data collection..."
-        python main.py collect --source fred
-        echo "FRED collection completed."
-      timeout-minutes: 3
-
-    - name: Show status
-      run: |
-        python main.py status || true
-        echo "=== Data files ==="
-        ls -lh data/raw/ 2>/dev/null || echo "No data files yet"
-        echo "=== Logs ==="
-        tail -50 logs/model.log 2>/dev/null || echo "No logs yet"
-
-    - name: Upload artifacts
-      if: always()
+    - name: Upload latest data
       uses: actions/upload-artifact@v4
       with:
-        name: data-run-${{ github.run_number }}
-        path: |
-          data/raw/*.parquet
-          logs/*.log
+        name: steam-data-latest
+        path: data/raw/*.parquet
         retention-days: 90
+        overwrite: true
 
     - name: Summary
       if: always()
@@ -143,12 +54,14 @@ jobs:
         echo "**Run #${{ github.run_number }}** at $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         if [ -f "data/raw/steam_hourly.parquet" ]; then
-          echo "✅ Steam data exists" >> $GITHUB_STEP_SUMMARY
+          SIZE=$(python -c "import pandas as pd; df=pd.read_parquet('data/raw/steam_hourly.parquet'); print(len(df))")
+          echo "✅ Steam data: $SIZE records" >> $GITHUB_STEP_SUMMARY
         else
           echo "⚠️ No Steam data file" >> $GITHUB_STEP_SUMMARY
         fi
         if [ -f "data/raw/unemployment.parquet" ]; then
-          echo "✅ Unemployment data exists" >> $GITHUB_STEP_SUMMARY
+          SIZE=$(python -c "import pandas as pd; df=pd.read_parquet('data/raw/unemployment.parquet'); print(len(df))")
+          echo "✅ FRED data: $SIZE records" >> $GITHUB_STEP_SUMMARY
         else
           echo "ℹ️ No unemployment data" >> $GITHUB_STEP_SUMMARY
         fi
